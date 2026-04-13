@@ -14,6 +14,7 @@ Thumbs.db
 **/venv/
 **/.env
 **/.env.*
+!frontend/.env.production.example
 
 # Node
 **/node_modules/
