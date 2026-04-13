@@ -58,6 +58,10 @@ CATALOG_SOURCES = {
 FALLBACK_PRODUCTS_PATHS = [
     BASE_DIR / "products_complete.json",
     BASE_DIR / "products.json",
+    BASE_DIR.parent / "backend" / "products_complete.json",
+    BASE_DIR.parent / "backend" / "products.json",
+    Path.cwd() / "products_complete.json",
+    Path.cwd() / "products.json",
 ]
 
 app = FastAPI(title="Multi Catalog Product Search API")
@@ -574,6 +578,17 @@ def load_catalogs() -> dict[str, dict]:
 SOURCE_STORE = load_catalogs()
 
 
+def _fallback_files_status() -> dict[str, bool]:
+    status: dict[str, bool] = {}
+    for path in FALLBACK_PRODUCTS_PATHS:
+        try:
+            resolved = path.resolve()
+        except OSError:
+            resolved = path
+        status[str(resolved)] = resolved.exists()
+    return status
+
+
 def _is_probably_code_query(query: str) -> bool:
     trimmed = query.strip()
     if not trimmed or not any(character.isdigit() for character in trimmed):
@@ -1037,6 +1052,9 @@ def health():
             for source_key, store in SOURCE_STORE.items()
         },
         "images_dir": str(IMAGES_DIR),
+        "cwd": str(Path.cwd()),
+        "base_dir": str(BASE_DIR),
+        "fallback_files": _fallback_files_status(),
     }
 
 
