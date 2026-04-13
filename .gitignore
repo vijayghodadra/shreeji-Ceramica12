@@ -40,7 +40,6 @@ backend/images_output.txt
 backend/page58_render.png
 
 # Large generated catalog assets (regenerate locally)
-backend/images/
 backend/*.xlsx
 backend/catalog_cache.json
 backend/kohler_cache.json
