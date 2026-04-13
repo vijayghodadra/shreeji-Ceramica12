@@ -82,21 +82,6 @@ function normalizeImageUrl(value) {
   return raw;
 }
 
-function buildImageNameFromCode(code) {
-  const value = String(code || "").trim().toUpperCase().replace(/\s*([+/-])\s*/g, "$1").replace(/\\/g, "/");
-  const parts = [];
-
-  for (const rawPart of value.split("/")) {
-    const part = rawPart.replace(/\s+/g, "").replace(/^\.+|\.+$/g, "").replace(/^-+|-+$/g, "");
-    if (part) {
-      parts.push(part);
-    }
-  }
-
-  const safe = parts.join("/").trim();
-  return safe ? `${safe}.png` : "";
-}
-
 function buildProductImageUrl(product) {
   const primary = normalizeImageUrl(product?.image);
   if (primary) {

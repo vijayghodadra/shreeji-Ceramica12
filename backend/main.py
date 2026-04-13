@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 
@@ -54,19 +55,39 @@ CATALOG_SOURCES = {
     },
 }
 
+FALLBACK_PRODUCTS_PATHS = [
+    BASE_DIR / "products.json",
+]
+
 app = FastAPI(title="Multi Catalog Product Search API")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
+
+def _cors_origins_from_env() -> tuple[list[str], str | None, bool]:
+    default_origins = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://localhost:3001",
         "http://127.0.0.1:3001",
         "null",
-    ],
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
-    allow_credentials=True,
+    ]
+    env_value = os.environ.get("CORS_ORIGINS", "").strip()
+    origins = [item.strip() for item in env_value.split(",") if item.strip()] if env_value else default_origins
+
+    if "*" in origins:
+        # Star origin cannot be used with credentials in CORS middleware.
+        return ["*"], None, False
+
+    origin_regex = os.environ.get("CORS_ORIGIN_REGEX", r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$").strip()
+    return origins, origin_regex or None, True
+
+
+_allow_origins, _allow_origin_regex, _allow_credentials = _cors_origins_from_env()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allow_origins,
+    allow_origin_regex=_allow_origin_regex,
+    allow_credentials=_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -387,6 +408,101 @@ def _load_catalog_from_cache(cache_path: Path, source_key: str, source_label: st
     return catalog
 
 
+def _load_catalog_from_products_file(products_path: Path, source_key: str, source_label: str) -> list[dict]:
+    if not products_path.exists():
+        return []
+
+    try:
+        data = json.loads(products_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        print(f"[catalog:{source_key}] failed to read products fallback: {error}")
+        return []
+
+    if not isinstance(data, list):
+        return []
+
+    catalog: list[dict] = []
+    seen_codes = set()
+
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+
+        source_value = str(item.get("source", source_key)).strip().lower() or source_key
+        if item.get("source") and source_value != source_key:
+            continue
+
+        code = str(item.get("code", "")).strip()
+        name = str(item.get("name") or item.get("product_name") or "").strip()
+        if not code:
+            continue
+        if not name:
+            name = code
+
+        compact_code = normalize_code(code)
+        if not compact_code or compact_code in seen_codes:
+            continue
+        seen_codes.add(compact_code)
+
+        try:
+            price = int(float(item.get("price", 0) or 0))
+        except (TypeError, ValueError):
+            price = 0
+
+        base_code_value = str(item.get("base_code") or item.get("baseCode") or "").strip()
+        variant_value = str(item.get("variant", "")).strip().upper()
+        if not base_code_value:
+            parsed_base, parsed_variant = _split_code_variant(code)
+            base_code_value = parsed_base
+            if not variant_value:
+                variant_value = parsed_variant
+
+        color = str(item.get("color") or item.get("finish") or "").strip() or None
+        if not variant_value and color:
+            inferred_variant = _infer_variant_from_color(color)
+            if inferred_variant:
+                variant_value = inferred_variant
+        if not color and variant_value in AQUANT_VARIANT_COLOR_MAP:
+            color = AQUANT_VARIANT_COLOR_MAP[variant_value]
+
+        image_value = str(item.get("image") or item.get("image_file") or "").strip()
+        if image_value:
+            image_value = _versioned_image_path(image_value)
+
+        try:
+            page_number = int(float(item.get("page_number") or item.get("pageNumber") or 0))
+        except (TypeError, ValueError):
+            page_number = 0
+
+        is_cp_value = str(item.get("is_cp") or item.get("isCp") or "").strip()
+        is_cp = is_cp_value in {"1", "true", "True", "yes", "YES"} or variant_value == "CP"
+
+        details = str(item.get("details") or name).strip() or name
+        source_label_value = str(item.get("source_label") or item.get("sourceLabel") or source_label).strip() or source_label
+
+        catalog.append(
+            {
+                "source": source_value,
+                "source_label": source_label_value,
+                "code": code,
+                "name": name,
+                "price": price,
+                "color": color,
+                "size": str(item.get("size", "")).strip() or None,
+                "details": details,
+                "page_number": page_number,
+                "image": image_value,
+                "image_bbox": item.get("image_bbox") or item.get("imageBbox"),
+                "base_code": base_code_value or None,
+                "variant": variant_value or None,
+                "is_cp": is_cp,
+            }
+        )
+
+    catalog.sort(key=lambda product: (product["code"], product["name"]))
+    return catalog
+
+
 def _resolve_excel_path(excel_path: Path) -> Path:
     candidates = sorted(
         excel_path.parent.glob(f"{excel_path.stem}_codeimg*{excel_path.suffix}"),
@@ -431,6 +547,21 @@ def load_catalogs() -> dict[str, dict]:
                 print(f"[catalog:{source_key}] loaded {len(cache_catalog)} products from {cache_path.name}")
                 source_store[source_key] = _build_source_store(cache_catalog)
                 continue
+
+        fallback_loaded = False
+        for products_path in FALLBACK_PRODUCTS_PATHS:
+            fallback_catalog = _load_catalog_from_products_file(
+                products_path=products_path,
+                source_key=source_key,
+                source_label=config["label"],
+            )
+            if fallback_catalog:
+                print(f"[catalog:{source_key}] loaded {len(fallback_catalog)} products from {products_path.name}")
+                source_store[source_key] = _build_source_store(fallback_catalog)
+                fallback_loaded = True
+                break
+        if fallback_loaded:
+            continue
 
         print(f"[catalog:{source_key}] excel not found or empty at {excel_path}")
         source_store[source_key] = _build_source_store([])
