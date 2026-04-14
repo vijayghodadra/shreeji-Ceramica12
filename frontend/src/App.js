@@ -5,7 +5,7 @@ import "./App.css";
 const defaultBackendUrl =
   process.env.NODE_ENV === "development"
     ? "http://127.0.0.1:8001"
-    : "http://127.0.0.1:8000";
+    : "https://shriji-tiles.onrender.com";
 
 const runtimeBackendUrl =
   (typeof window !== "undefined" && window.desktopConfig?.backendUrl) ||

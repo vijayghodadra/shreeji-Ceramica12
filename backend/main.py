@@ -82,7 +82,10 @@ def _cors_origins_from_env() -> tuple[list[str], str | None, bool]:
         # Star origin cannot be used with credentials in CORS middleware.
         return ["*"], None, False
 
-    origin_regex = os.environ.get("CORS_ORIGIN_REGEX", r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$").strip()
+    origin_regex = os.environ.get(
+        "CORS_ORIGIN_REGEX",
+        r"^https?://((localhost|127\.0\.0\.1)(:\d+)?|[a-z0-9-]+\.vercel\.app|[a-z0-9-]+\.onrender\.com)$",
+    ).strip()
     return origins, origin_regex or None, True
 
 
@@ -188,6 +191,25 @@ def _build_source_store(catalog: list[dict]) -> dict:
         "searchable": searchable_catalog,
         "exact": exact_code_index,
     }
+
+
+def _is_catalog_suspicious(catalog: list[dict], source_key: str) -> bool:
+    if not catalog:
+        return True
+
+    # Reject placeholder/minimal datasets that sometimes appear in deployment artifacts.
+    if len(catalog) <= 2:
+        source_token = normalize_text(source_key)
+        placeholder_rows = 0
+        for item in catalog:
+            code_text = normalize_text(item.get("code", ""))
+            name_text = normalize_text(item.get("name", ""))
+            if code_text == source_token or name_text == source_token:
+                placeholder_rows += 1
+        if placeholder_rows >= 1:
+            return True
+
+    return False
 
 
 def _split_code_variant(code: str) -> tuple[str, str]:
@@ -530,6 +552,8 @@ def load_catalogs() -> dict[str, dict]:
         excel_path = Path(config.get("excel_path", "")) if config.get("excel_path") else None
         cache_path = Path(config.get("cache_path", "")) if config.get("cache_path") else None
 
+        candidates: list[tuple[str, list[dict], str]] = []
+
         if excel_path:
             excel_path = _resolve_excel_path(excel_path)
             excel_catalog = _load_catalog_from_excel(
@@ -537,13 +561,14 @@ def load_catalogs() -> dict[str, dict]:
                 source_key=source_key,
                 source_label=config["label"],
             )
-            if excel_catalog:
-                print(f"[catalog:{source_key}] loaded {len(excel_catalog)} products from {excel_path.name}")
-                source_store[source_key] = _build_source_store(excel_catalog)
-                continue
+            if excel_catalog and not _is_catalog_suspicious(excel_catalog, source_key):
+                candidates.append(("excel", excel_catalog, excel_path.name))
+            elif excel_catalog:
+                print(
+                    f"[catalog:{source_key}] ignoring suspicious excel dataset ({len(excel_catalog)}) from {excel_path.name}"
+                )
 
         # Prefer explicit products fallback before cache to avoid stale partial caches in deployment.
-        fallback_loaded = False
         for products_path in FALLBACK_PRODUCTS_PATHS:
             fallback_catalog = _load_catalog_from_products_file(
                 products_path=products_path,
@@ -551,12 +576,7 @@ def load_catalogs() -> dict[str, dict]:
                 source_label=config["label"],
             )
             if fallback_catalog:
-                print(f"[catalog:{source_key}] loaded {len(fallback_catalog)} products from {products_path.name}")
-                source_store[source_key] = _build_source_store(fallback_catalog)
-                fallback_loaded = True
-                break
-        if fallback_loaded:
-            continue
+                candidates.append(("fallback", fallback_catalog, products_path.name))
 
         if cache_path:
             cache_catalog = _load_catalog_from_cache(
@@ -565,12 +585,20 @@ def load_catalogs() -> dict[str, dict]:
                 source_label=config["label"],
             )
             if cache_catalog:
-                print(f"[catalog:{source_key}] loaded {len(cache_catalog)} products from {cache_path.name}")
-                source_store[source_key] = _build_source_store(cache_catalog)
-                continue
+                candidates.append(("cache", cache_catalog, cache_path.name))
 
-        print(f"[catalog:{source_key}] excel not found or empty at {excel_path}")
-        source_store[source_key] = _build_source_store([])
+        if not candidates:
+            print(f"[catalog:{source_key}] no valid data source found")
+            source_store[source_key] = _build_source_store([])
+            continue
+
+        source_priority = {"fallback": 0, "excel": 1, "cache": 2}
+        candidates.sort(key=lambda item: (-len(item[1]), source_priority.get(item[0], 9), item[2]))
+        selected_kind, selected_catalog, selected_origin = candidates[0]
+        print(
+            f"[catalog:{source_key}] selected {selected_kind} source {selected_origin} with {len(selected_catalog)} products"
+        )
+        source_store[source_key] = _build_source_store(selected_catalog)
 
     return source_store
 
