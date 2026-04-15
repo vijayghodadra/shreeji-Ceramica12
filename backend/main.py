@@ -64,6 +64,54 @@ FALLBACK_PRODUCTS_PATHS = [
     Path.cwd() / "products.json",
 ]
 
+# Manual corrections requested from catalog PDF references.
+PRODUCT_OVERRIDES = {
+    "1961": {
+        "name": "Semi Counter Basin",
+        "price": 16500,
+        "color": "White",
+        "size": "700 x 470 x 210 mm",
+        "image": "/images/1961SEMI.png",
+    },
+    "1962": {
+        "name": "Three Hole Semi Counter Basin",
+        "price": 17500,
+        "color": "White",
+        "size": "700 x 470 x 210 mm",
+        "image": "/images/1962.png",
+    },
+    "1963ab": {
+        "price": 59500,
+    },
+    "1963g": {
+        "price": 59500,
+    },
+}
+
+MANUAL_QUERY_RESULTS = {
+    "1871": [
+        {"code": "1871 AB + W", "variant": "AB+W", "color": "Antique Bronze", "price": 44500, "image": "/images/1857W.png", "name": "WC With PVC Seat Cover", "details": "1 Piece Floor Mounted Couple Suite S Trap Siphonic Flushing System, Trap Distance 300 mm Seat Cover White", "size": "760 x 440 x 750 mm", "base_code": "1871"},
+        {"code": "1871 G + W", "variant": "G+W", "color": "Gold", "price": 44500, "image": "/images/1857W.png", "name": "WC With PVC Seat Cover", "details": "1 Piece Floor Mounted Couple Suite S Trap Siphonic Flushing System, Trap Distance 300 mm Seat Cover White", "size": "760 x 440 x 750 mm", "base_code": "1871"},
+        {"code": "1871 AB + WN", "variant": "AB+WN", "color": "Antique Bronze", "price": 59500, "image": "/images/1857WN.png", "name": "WC With Wooden Seat Cover", "details": "1 Piece Floor Mounted Couple Suite S Trap Siphonic Flushing System, Trap Distance 300 mm Seat Cover Walnut Colour (Engineered Wood)", "size": "760 x 440 x 750 mm", "base_code": "1871"},
+        {"code": "1871 G + WN", "variant": "G+WN", "color": "Gold", "price": 59500, "image": "/images/1857WN.png", "name": "WC With Wooden Seat Cover", "details": "1 Piece Floor Mounted Couple Suite S Trap Siphonic Flushing System, Trap Distance 300 mm Seat Cover Walnut Colour (Engineered Wood)", "size": "760 x 440 x 750 mm", "base_code": "1871"},
+    ],
+    "1871abw": [
+        {"code": "1871 AB + W", "variant": "AB+W", "color": "Antique Bronze", "price": 44500, "image": "/images/1857W.png", "name": "WC With PVC Seat Cover", "details": "1 Piece Floor Mounted Couple Suite S Trap Siphonic Flushing System, Trap Distance 300 mm Seat Cover White", "size": "760 x 440 x 750 mm", "base_code": "1871"},
+    ],
+    "1871gw": [
+        {"code": "1871 G + W", "variant": "G+W", "color": "Gold", "price": 44500, "image": "/images/1857W.png", "name": "WC With PVC Seat Cover", "details": "1 Piece Floor Mounted Couple Suite S Trap Siphonic Flushing System, Trap Distance 300 mm Seat Cover White", "size": "760 x 440 x 750 mm", "base_code": "1871"},
+    ],
+    "1871abwn": [
+        {"code": "1871 AB + WN", "variant": "AB+WN", "color": "Antique Bronze", "price": 59500, "image": "/images/1857WN.png", "name": "WC With Wooden Seat Cover", "details": "1 Piece Floor Mounted Couple Suite S Trap Siphonic Flushing System, Trap Distance 300 mm Seat Cover Walnut Colour (Engineered Wood)", "size": "760 x 440 x 750 mm", "base_code": "1871"},
+    ],
+    "1871gwn": [
+        {"code": "1871 G + WN", "variant": "G+WN", "color": "Gold", "price": 59500, "image": "/images/1857WN.png", "name": "WC With Wooden Seat Cover", "details": "1 Piece Floor Mounted Couple Suite S Trap Siphonic Flushing System, Trap Distance 300 mm Seat Cover Walnut Colour (Engineered Wood)", "size": "760 x 440 x 750 mm", "base_code": "1871"},
+    ],
+    "2652bg": [
+        {"code": "2652 BG", "variant": "BG", "color": "Brushed Gold", "price": 49500, "image": "/images/2652BG.png", "name": "Brass & Glass Tall Basin Mixer With Visible Waterfall Flow", "details": "Brass & Glass Tall Basin Mixer With Visible Waterfall Flow", "size": None, "base_code": "2652"},
+    ],
+}
+
 app = FastAPI(title="Multi Catalog Product Search API")
 
 
@@ -727,8 +775,14 @@ def _combined_code_search(query: str, source_key: str) -> list[dict]:
     if len(tokens) < 2:
         return []
 
+    # Ignore ambiguous non-numeric tokens (for example: W, WN) to avoid
+    # accidental cross-product combinations like 1871 + 1021W.
+    resolvable_tokens = [token for token in tokens if any(character.isdigit() for character in token)]
+    if not resolvable_tokens:
+        return []
+
     matched_products: list[dict] = []
-    for token in tokens:
+    for token in resolvable_tokens:
         compact = normalize_code(token)
         if not compact:
             continue
@@ -743,7 +797,6 @@ def _combined_code_search(query: str, source_key: str) -> list[dict]:
                 product
                 for product in searchable
                 if product["_code_compact"].startswith(compact)
-                or compact in product["_code_compact"]
                 or any(normalize_code(piece) == compact for piece in product.get("_code_tokens", []))
             ),
             None,
@@ -761,7 +814,9 @@ def _combined_code_search(query: str, source_key: str) -> list[dict]:
         unique_products.append(product)
 
     if len(unique_products) < 2:
-        return []
+        # For mixed queries such as "1871AB+WN", fall back to the first
+        # resolvable product instead of manufacturing a wrong combination.
+        return unique_products[:1]
 
     combined_name = " + ".join(str(product.get("name", "")).strip() for product in unique_products if product.get("name"))
     primary = unique_products[0]
@@ -874,7 +929,21 @@ def _get_autocomplete_suggestions(query: str, source_key: str, limit: int = 10) 
     
     # Sort by score (descending) and return top results
     suggestions.sort(key=lambda x: -x[0])
-    return [item[1] for item in suggestions[:limit]]
+    if suggestions:
+        return [item[1] for item in suggestions[:limit]]
+
+    image_only_results = _image_only_query_results(query, source_key)
+    if image_only_results:
+        image_only_product = image_only_results[0]
+        return [
+            {
+                "code": image_only_product.get("code", ""),
+                "name": image_only_product.get("name", ""),
+                "source": image_only_product.get("source", ""),
+            }
+        ]
+
+    return []
 
 
 def _search_matches(query: str, source_key: str, limit: int = 20) -> list[dict]:
@@ -1032,6 +1101,76 @@ def _search_matches(query: str, source_key: str, limit: int = 20) -> list[dict]:
     return [item[-1] for item in candidates[:limit]]
 
 
+def _manual_query_results(query: str, source_key: str) -> list[dict]:
+    if source_key != "aquant":
+        return []
+
+    query_key = normalize_code(query)
+    items = MANUAL_QUERY_RESULTS.get(query_key, [])
+    if not items:
+        return []
+
+    results = []
+    for item in items:
+        results.append(
+            {
+                "source": "aquant",
+                "source_label": "Aquant",
+                "code": item["code"],
+                "name": item.get("name") or "Product",
+                "price": item["price"],
+                "color": item["color"],
+                "size": item.get("size"),
+                "details": item.get("details") or item.get("name"),
+                "base_code": item.get("base_code") or normalize_code(item["code"]),
+                "variant": item.get("variant"),
+                "is_cp": False,
+                "image": item.get("image"),
+            }
+        )
+    return results
+
+
+def _image_only_query_results(query: str, source_key: str) -> list[dict]:
+    code_value = str(query or "").strip()
+    if not code_value:
+        return []
+
+    expected_image_file = _image_name_from_code(code_value)
+    candidates = []
+
+    if expected_image_file:
+        candidates.append(f"Kohler/{expected_image_file}" if source_key == "kohler" else expected_image_file)
+
+    fallback_relative = _fallback_image_by_code(code_value, source_key)
+    if fallback_relative:
+        candidates.append(fallback_relative)
+
+    for relative_path in candidates:
+        if not relative_path or not _resolve_existing_image_path(relative_path):
+            continue
+
+        base_code, variant = _split_code_variant(code_value)
+        return [
+            {
+                "source": source_key,
+                "source_label": CATALOG_SOURCES[source_key]["label"],
+                "code": code_value,
+                "name": code_value,
+                "price": 0,
+                "color": None,
+                "size": None,
+                "details": f"Manually added image for {code_value}",
+                "base_code": base_code or normalize_code(code_value),
+                "variant": variant or None,
+                "is_cp": False,
+                "image": f"/images/{relative_path.replace('\\', '/')}",
+            }
+        ]
+
+    return []
+
+
 def _serialize_product(request: Request, product: dict) -> dict:
     source_key = product.get("source") or "aquant"
     code_value = str(product.get("code") or "").strip()
@@ -1103,6 +1242,22 @@ def _serialize_product(request: Request, product: dict) -> dict:
         "hasImage": has_image,
     }
 
+    if source_key == "aquant":
+        override = PRODUCT_OVERRIDES.get(normalize_code(serialized.get("code", "")))
+        if override:
+            for field in ("name", "price", "color", "size", "details"):
+                if field in override:
+                    serialized[field] = override[field]
+
+            override_image = str(override.get("image") or "").strip()
+            if override_image:
+                relative = image_relative_path(override_image)
+                resolved = _resolve_existing_image_path(relative)
+                if resolved:
+                    version = f"?v={int(resolved.stat().st_mtime)}"
+                    serialized["image"] = f"{str(request.base_url).rstrip('/')}/images/{relative}{version}"
+                    serialized["hasImage"] = True
+
     combined_products = product.get("combined_products")
     if isinstance(combined_products, list) and combined_products:
         serialized["linkedProducts"] = [
@@ -1166,7 +1321,7 @@ def search(
     matches = []
     seen_keys = set()
     for source_key in source_keys:
-        source_matches = _search_matches(q, source_key)
+        source_matches = _manual_query_results(q, source_key) or _image_only_query_results(q, source_key) or _search_matches(q, source_key)
         for match in source_matches:
             unique_key = (
                 source_key,
