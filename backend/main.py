@@ -86,9 +86,88 @@ PRODUCT_OVERRIDES = {
     "1963g": {
         "price": 59500,
     },
+    "2031": {
+        "name": "Concealed Wall Mounted Single Lever Dusch Mixer 15 mm inlet",
+        "price": 8500,
+        "details": "Concealed Wall Mounted Single Lever Dusch Mixer 15 mm inlet",
+        "image": "/images/2031.png",
+    },
+    "4004": {
+        "price": 5750,
+    },
+    "1505cp": {
+        "price": 3590,
+    },
+    "1342cp": {
+        "price": 23500,
+    },
 }
 
 MANUAL_QUERY_RESULTS = {
+    "1001ft": [
+        {
+            "code": "1001-FT",
+            "variant": "FT",
+            "color": "Chrome",
+            "price": 1090,
+            "image": "/images/1001.png",
+            "name": "Pop-Up Waste Coupling",
+            "details": "Pop-Up Waste Coupling",
+            "size": "32 mm x 75 mm",
+            "base_code": "1001",
+        },
+    ],
+    "1001ht": [
+        {
+            "code": "1001-HT",
+            "variant": "HT",
+            "color": "Chrome",
+            "price": 1090,
+            "image": "/images/1001.png",
+            "name": "Pop-Up Waste Coupling",
+            "details": "Pop-Up Waste Coupling",
+            "size": "32 mm x 75 mm",
+            "base_code": "1001",
+        },
+    ],
+    "1017cp": [
+        {
+            "code": "1017-CP",
+            "variant": "CP",
+            "color": "Chrome",
+            "price": 1350,
+            "image": "/images/1017CP.png",
+            "name": "Pop-Up Waste Coupling",
+            "details": "Pop-Up Waste Coupling",
+            "size": "32 mm x 125 mm",
+            "base_code": "1017",
+        },
+    ],
+    "1018ft": [
+        {
+            "code": "1018-FT",
+            "variant": "FT",
+            "color": "Chrome",
+            "price": 2150,
+            "image": "/images/1001.png",
+            "name": "Pop-Up Waste Coupling",
+            "details": "Pop-Up Waste Coupling",
+            "size": "32 mm x 175 mm",
+            "base_code": "1018",
+        },
+    ],
+    "1023": [
+        {
+            "code": "1023",
+            "variant": None,
+            "color": None,
+            "price": 4950,
+            "name": "Stone Pop-Up Waste Coupling",
+            "details": "Stone Pop-Up Waste Coupling",
+            "size": "32 mm x 120 mm",
+            "base_code": "1023",
+        },
+    ],
     "1871": [
         {"code": "1871 AB + W", "variant": "AB+W", "color": "Antique Bronze", "price": 44500, "image": "/images/1857W.png", "name": "WC With PVC Seat Cover", "details": "1 Piece Floor Mounted Couple Suite S Trap Siphonic Flushing System, Trap Distance 300 mm Seat Cover White", "size": "760 x 440 x 750 mm", "base_code": "1871"},
         {"code": "1871 G + W", "variant": "G+W", "color": "Gold", "price": 44500, "image": "/images/1857W.png", "name": "WC With PVC Seat Cover", "details": "1 Piece Floor Mounted Couple Suite S Trap Siphonic Flushing System, Trap Distance 300 mm Seat Cover White", "size": "760 x 440 x 750 mm", "base_code": "1871"},
