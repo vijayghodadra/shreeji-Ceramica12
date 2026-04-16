@@ -776,12 +776,45 @@ def load_catalogs() -> dict[str, dict]:
             source_store[source_key] = _build_source_store([])
             continue
 
-        # Prefer canonical sources first: cache, then excel, then legacy fallback.
-        source_priority = {"cache": 0, "excel": 1, "fallback": 2}
+        # Kohler is safer from excel first because stale deployment caches can carry zero-price rows.
+        if source_key == "kohler":
+            source_priority = {"excel": 0, "cache": 1, "fallback": 2}
+        else:
+            source_priority = {"cache": 0, "excel": 1, "fallback": 2}
         candidates.sort(key=lambda item: (-len(item[1]), source_priority.get(item[0], 9), item[2]))
         selected_kind, selected_catalog, selected_origin = candidates[0]
+
+        # Backfill zero or missing prices from other candidate sources using exact code match.
+        replacement_price_by_code: dict[str, int] = {}
+        for _, candidate_catalog, _ in candidates:
+            for row in candidate_catalog:
+                code_key = normalize_code(row.get("code", ""))
+                if not code_key:
+                    continue
+                try:
+                    candidate_price = int(float(row.get("price", 0) or 0))
+                except (TypeError, ValueError):
+                    candidate_price = 0
+                if candidate_price > 0 and candidate_price > replacement_price_by_code.get(code_key, 0):
+                    replacement_price_by_code[code_key] = candidate_price
+
+        repaired_count = 0
+        for row in selected_catalog:
+            code_key = normalize_code(row.get("code", ""))
+            if not code_key:
+                continue
+            try:
+                current_price = int(float(row.get("price", 0) or 0))
+            except (TypeError, ValueError):
+                current_price = 0
+            replacement_price = replacement_price_by_code.get(code_key, 0)
+            if current_price <= 0 and replacement_price > 0:
+                row["price"] = replacement_price
+                repaired_count += 1
+
         print(
             f"[catalog:{source_key}] selected {selected_kind} source {selected_origin} with {len(selected_catalog)} products"
+            + (f" (price backfilled: {repaired_count})" if repaired_count else "")
         )
         source_store[source_key] = _build_source_store(selected_catalog)
 
