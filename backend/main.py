@@ -22,6 +22,9 @@ from extractor import (
 from runtime_paths import get_backend_base_dir
 
 BASE_DIR = get_backend_base_dir()
+KOHLER_CACHE_PATH = os.path.join(str(BASE_DIR), "kohler_cache.json")
+KOHLER_EXCEL_PATH = os.path.join(str(BASE_DIR), "kohler_catalog_full.xlsx")
+USE_CACHE = False
 IMAGES_DIR = Path(DEFAULT_IMAGES_DIR)
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 WINDOWS_FORBIDDEN_SEGMENT_CHARS = set('<>:"\\|?*')
@@ -50,8 +53,8 @@ CATALOG_SOURCES = {
     },
     "kohler": {
         "label": "Kohler",
-        "excel_path": BASE_DIR / "kohler_catalog_full.xlsx",
-        "cache_path": Path(DEFAULT_KOHLER_CACHE_PATH),
+        "excel_path": Path(KOHLER_EXCEL_PATH),
+        "cache_path": Path(KOHLER_CACHE_PATH),
     },
 }
 
@@ -743,6 +746,16 @@ def _resolve_excel_path(excel_path: Path) -> Path:
     return excel_path
 
 
+def _log_kohler_runtime_paths() -> None:
+    print("Kohler file exists:", os.path.exists(KOHLER_CACHE_PATH))
+    print("Kohler excel exists:", os.path.exists(KOHLER_EXCEL_PATH))
+    print("Current directory:", os.getcwd())
+    try:
+        print("Files:", os.listdir(BASE_DIR))
+    except OSError as error:
+        print("Files: <error>", error)
+
+
 def load_catalogs() -> dict[str, dict]:
     source_store = {}
     allow_kohler_products_fallback = os.environ.get("ENABLE_KOHLER_PRODUCTS_FALLBACK", "").strip().lower() in {
@@ -750,6 +763,9 @@ def load_catalogs() -> dict[str, dict]:
         "true",
         "yes",
     }
+
+    _log_kohler_runtime_paths()
+    print("use_cache:", USE_CACHE)
 
     for source_key, config in CATALOG_SOURCES.items():
         excel_path = Path(config.get("excel_path", "")) if config.get("excel_path") else None
@@ -783,7 +799,7 @@ def load_catalogs() -> dict[str, dict]:
                 if fallback_catalog:
                     candidates.append(("fallback", fallback_catalog, products_path.name))
 
-        if cache_path:
+        if USE_CACHE and cache_path:
             cache_catalog = _load_catalog_from_cache(
                 cache_path=cache_path,
                 source_key=source_key,
@@ -842,7 +858,7 @@ def _catalog_sources_signature() -> tuple:
 
     for source_key, config in CATALOG_SOURCES.items():
         excel_path = Path(config.get("excel_path", "")) if config.get("excel_path") else None
-        cache_path = Path(config.get("cache_path", "")) if config.get("cache_path") else None
+        cache_path = Path(config.get("cache_path", "")) if USE_CACHE and config.get("cache_path") else None
 
         if excel_path:
             resolved_excel = _resolve_excel_path(excel_path)
@@ -871,6 +887,17 @@ def _catalog_sources_signature() -> tuple:
 
 SOURCE_STORE = load_catalogs()
 _CATALOG_SOURCES_SIGNATURE = _catalog_sources_signature()
+
+
+@app.on_event("startup")
+def _startup_load_catalogs() -> None:
+    global SOURCE_STORE, _CATALOG_SOURCES_SIGNATURE
+
+    print("[startup] loading catalogs")
+    _log_kohler_runtime_paths()
+    SOURCE_STORE = load_catalogs()
+    _CATALOG_SOURCES_SIGNATURE = _catalog_sources_signature()
+    print("[startup] catalog counts:", {source_key: len(store.get("catalog", [])) for source_key, store in SOURCE_STORE.items()})
 
 
 def _ensure_catalogs_loaded() -> None:
@@ -1571,6 +1598,7 @@ def health():
         "cwd": str(Path.cwd()),
         "base_dir": str(BASE_DIR),
         "fallback_files": _fallback_files_status(),
+        "use_cache": USE_CACHE,
     }
 
 
@@ -1578,9 +1606,11 @@ def health():
 def search(
     request: Request,
     q: str = Query(default=""),
+    query: str = Query(default=""),
     catalog: str = Query(default="all"),
 ):
     _ensure_catalogs_loaded()
+    effective_query = (q or query or "").strip()
 
     selected_catalog = catalog.strip().lower()
     if selected_catalog not in {"all", *CATALOG_SOURCES.keys()}:
@@ -1594,7 +1624,11 @@ def search(
     matches = []
     seen_keys = set()
     for source_key in source_keys:
-        source_matches = _manual_query_results(q, source_key) or _search_matches(q, source_key) or _image_only_query_results(q, source_key)
+        source_matches = (
+            _manual_query_results(effective_query, source_key)
+            or _search_matches(effective_query, source_key)
+            or _image_only_query_results(effective_query, source_key)
+        )
         for match in source_matches:
             unique_key = (
                 source_key,
@@ -1606,7 +1640,7 @@ def search(
             seen_keys.add(unique_key)
             matches.append(_serialize_product(request, match))
 
-    compact_query = normalize_code(q)
+    compact_query = normalize_code(effective_query)
     if compact_query and ("woodenseatcover" in compact_query or "walnutcolour" in compact_query):
         synthetic_key = ("aquant", "woodenseatcover", "walnutcolour")
         if synthetic_key not in seen_keys:
@@ -1633,11 +1667,13 @@ def search(
 @app.get("/autocomplete")
 def autocomplete(
     q: str = Query(default=""),
+    query: str = Query(default=""),
     catalog: str = Query(default="all"),
     limit: int = Query(default=10, ge=1, le=20),
 ):
     """Get autocomplete suggestions based on prefix matching."""
     _ensure_catalogs_loaded()
+    effective_query = (q or query or "").strip()
 
     selected_catalog = catalog.strip().lower()
     if selected_catalog not in {"all", *CATALOG_SOURCES.keys()}:
@@ -1652,7 +1688,7 @@ def autocomplete(
     seen_codes = set()
     
     for source_key in source_keys:
-        source_suggestions = _get_autocomplete_suggestions(q, source_key, limit)
+        source_suggestions = _get_autocomplete_suggestions(effective_query, source_key, limit)
         for suggestion in source_suggestions:
             code_key = normalize_code(suggestion.get("code", ""))
             if code_key not in seen_codes:

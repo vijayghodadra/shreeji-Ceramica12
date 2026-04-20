@@ -45,6 +45,8 @@ backend/*.xlsx
 backend/catalog_cache.json
 backend/kohler_cache.json
 backend/kohler_test_cache.json
+!backend/kohler_cache.json
+!backend/kohler_catalog_full.xlsx
 
 # Archives/binaries
 **/*.zip
