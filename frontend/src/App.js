@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useEffect } from "react";
 import axios from "axios";
 import "./App.css";
+import { buildProposalFileName, generateQuotationPDF } from "./pdf/quotationPdf";
 
 const defaultBackendUrl =
   process.env.NODE_ENV === "development"
@@ -153,6 +154,7 @@ function App() {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState("");
   const [pdfZoom, setPdfZoom] = useState(100);
+  const [pdfGenerating, setPdfGenerating] = useState(false);
   const [imagePreview, setImagePreview] = useState({
     isOpen: false,
     src: "",
@@ -163,8 +165,10 @@ function App() {
   // Client State
   const [clientInfo, setClientInfo] = useState({
     preparedBy: "Jagdish",
+    proposalNo: `PRO-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}`,
     clientName: "",
     phone: "",
+    company: "",
     email: "",
     address: "",
     gstCompliance: false,
@@ -176,7 +180,7 @@ function App() {
     method: "item-wise", // "item-wise", "common", "total"
     bulkDiscount: 0,
     flatDiscount: 0,
-    watermark: false
+    watermark: true
   });
 
   // BOM State
@@ -399,47 +403,67 @@ function App() {
     if (!pdfPreviewUrl) return;
     const link = document.createElement('a');
     link.href = pdfPreviewUrl;
-    link.setAttribute('download', `Quotation_${clientInfo.clientName || 'Draft'}.pdf`);
+    link.setAttribute('download', buildProposalFileName(new Date(), clientInfo.clientName));
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
+  const buildPdfData = () => ({
+    clientInfo: {
+      ...clientInfo,
+      mobile: clientInfo.phone,
+      name: clientInfo.clientName,
+    },
+    proposalNo: clientInfo.proposalNo,
+    date: new Date().toISOString(),
+    products: bom.map((item) => ({
+      name: item.name,
+      sku: item.code,
+      size: item.size,
+      qty: item.qty,
+      rate: item.rate,
+      discount: discountConfig.method === "common" ? discountConfig.bulkDiscount : item.discount,
+      amount: calculateRowAmount(item),
+      image: buildProductImageUrl(item),
+      room: Array.isArray(item.room) ? item.room : item.room ? [item.room] : [],
+      details: item.displayName ? `${item.displayName}` : item.name,
+      color: item.color,
+      source: item.source,
+      mrp: item.rate,
+    })),
+    gstRate: clientInfo.gstPercentage,
+  });
+
   const generatePdf = async (preview = false) => {
     if (bom.length === 0) return alert("Add items first");
+    setPdfGenerating(true);
     try {
-      const response = await axios.post(`${BACKEND_BASE_URL}/generate-pdf`, {
-        client_info: clientInfo,
-        discount_config: discountConfig,
-        bom: bom.map(item => ({...item, amount: calculateRowAmount(item)})),
-        subtotal,
-        total_gst: totalGst,
-        grand_total: grandTotal
-      }, { responseType: 'blob' });
-
-      const pdfBlob = response.data instanceof Blob
-        ? new Blob([response.data], { type: response.data.type || "application/pdf" })
-        : new Blob([response.data], { type: "application/pdf" });
-      const url = window.URL.createObjectURL(pdfBlob);
+      const payload = buildPdfData();
+      const pdfBlob = await generateQuotationPDF(payload, {
+        branding: discountConfig.watermark,
+        download: !preview,
+        preview,
+        previewTarget: preview
+          ? (url) => {
+              if (pdfPreviewUrl) {
+                window.URL.revokeObjectURL(pdfPreviewUrl);
+              }
+              setPdfPreviewUrl(url);
+            }
+          : undefined,
+        filename: buildProposalFileName(payload.date, clientInfo.clientName),
+      });
 
       if (preview) {
-        if (pdfPreviewUrl) {
-          window.URL.revokeObjectURL(pdfPreviewUrl);
-        }
         setPdfZoom(100);
-        setPdfPreviewUrl(url);
-      } else {
-        const link = document.createElement('a');
-        link.href = url;
-        link.setAttribute('download', `Quotation_${clientInfo.clientName || 'Draft'}.pdf`);
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        setTimeout(() => window.URL.revokeObjectURL(url), 5000);
+        return pdfBlob;
       }
     } catch (err) {
       console.error("PDF Error:", err);
       alert("Failed to generate PDF");
+    } finally {
+      setPdfGenerating(false);
     }
   };
 
@@ -462,12 +486,20 @@ function App() {
               </select>
             </div>
             <div className="field-group">
+              <label>Proposal No</label>
+              <input type="text" value={clientInfo.proposalNo} onChange={(e) => setClientInfo({...clientInfo, proposalNo: e.target.value})} />
+            </div>
+            <div className="field-group">
               <label>Client Name / Business</label>
               <input type="text" placeholder="Enter name" value={clientInfo.clientName} onChange={(e) => setClientInfo({...clientInfo, clientName: e.target.value})} />
             </div>
             <div className="field-group">
               <label>Phone Number</label>
               <input type="text" placeholder="+91 ..." value={clientInfo.phone} onChange={(e) => setClientInfo({...clientInfo, phone: e.target.value})} />
+            </div>
+            <div className="field-group">
+              <label>Company</label>
+              <input type="text" placeholder="Company name" value={clientInfo.company} onChange={(e) => setClientInfo({...clientInfo, company: e.target.value})} />
             </div>
             <div className="field-group">
               <label>Email Address</label>
@@ -714,9 +746,9 @@ function App() {
         </div>
 
         <div className="action-buttons mt-12 flex justify-end gap-4 p-6">
-           <button className="btn-pro btn-save">Save Quote</button>
-           <button className="btn-pro btn-view" onClick={() => generatePdf(true)}>View PDF</button>
-           <button className="btn-pro btn-generate" onClick={() => generatePdf(false)}>Generate PDF</button>
+            <button className="btn-pro btn-save" disabled={pdfGenerating}>Save Quote</button>
+            <button className="btn-pro btn-view" onClick={() => generatePdf(true)} disabled={pdfGenerating}>{pdfGenerating ? "GENERATING..." : "View PDF"}</button>
+            <button className="btn-pro btn-generate" onClick={() => generatePdf(false)} disabled={pdfGenerating}>{pdfGenerating ? "GENERATING..." : "Generate PDF"}</button>
         </div>
 
         {pdfPreviewUrl && (
