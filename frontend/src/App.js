@@ -14,6 +14,9 @@ const runtimeBackendUrl =
   defaultBackendUrl;
 
 const BACKEND_BASE_URL = runtimeBackendUrl.replace(/\/+$/, "");
+const PUBLIC_ASSET_BASE_URL =
+  process.env.REACT_APP_PUBLIC_ASSET_BASE_URL ||
+  BACKEND_BASE_URL;
 const API_URL = `${BACKEND_BASE_URL}/search`;
 
 const currencyFormatter = new Intl.NumberFormat("en-IN", {
@@ -103,6 +106,16 @@ function normalizeImageUrl(value) {
   if (raw.startsWith("/")) {
     return `${BACKEND_BASE_URL}${raw}`;
   }
+
+  if (/^https?:\/\/(localhost|127\.0\.0\.1|::1)/i.test(raw)) {
+    try {
+      const parsed = new URL(raw);
+      return `${PUBLIC_ASSET_BASE_URL.replace(/\/+$/, "")}${parsed.pathname}${parsed.search}${parsed.hash}`;
+    } catch (error) {
+      return "";
+    }
+  }
+
   return raw;
 }
 
@@ -433,6 +446,7 @@ function App() {
       mrp: item.rate,
     })),
     gstRate: clientInfo.gstPercentage,
+    publicAssetBase: PUBLIC_ASSET_BASE_URL,
   });
 
   const generatePdf = async (preview = false) => {
@@ -444,6 +458,12 @@ function App() {
         branding: discountConfig.watermark,
         download: !preview,
         preview,
+        publicAssetBase: PUBLIC_ASSET_BASE_URL,
+        onImageValidation: (report) => {
+          if (!report?.ok) {
+            console.warn("PDF SKU-image validation report:", report);
+          }
+        },
         previewTarget: preview
           ? (url) => {
               if (pdfPreviewUrl) {

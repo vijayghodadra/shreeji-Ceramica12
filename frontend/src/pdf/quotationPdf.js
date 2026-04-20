@@ -11,6 +11,7 @@ import shreejiWatermarkUrl from "./assets/shreeji-watermark.png";
 const GST_RATE = 18;
 const RUPEE = "\u20B9";
 const CUSTOM_FONT = "ShreejiArial";
+const DEFAULT_PUBLIC_ASSET_BASE = "https://shriji-tiles.onrender.com";
 
 const PAGE = {
   width: 210,
@@ -272,6 +273,55 @@ function blobToDataUrl(blob) {
   });
 }
 
+function normalizePublicAssetBase(baseUrl) {
+  const raw = String(baseUrl || "").trim() || DEFAULT_PUBLIC_ASSET_BASE;
+  try {
+    return new URL(raw).origin;
+  } catch (error) {
+    return DEFAULT_PUBLIC_ASSET_BASE;
+  }
+}
+
+function normalizeImageSource(src, publicAssetBase) {
+  const raw = String(src || "").trim();
+  if (!raw) {
+    return "";
+  }
+
+  if (raw.startsWith("data:image/") || raw.startsWith("blob:")) {
+    return raw;
+  }
+
+  const base = normalizePublicAssetBase(publicAssetBase);
+
+  try {
+    const absolute = new URL(raw, base);
+    if (!["http:", "https:"].includes(absolute.protocol)) {
+      return "";
+    }
+
+    return absolute.toString();
+  } catch (error) {
+    return "";
+  }
+}
+
+function uniqueNonEmpty(values) {
+  const seen = new Set();
+  const result = [];
+
+  (Array.isArray(values) ? values : []).forEach((value) => {
+    const normalized = String(value || "").trim();
+    if (!normalized || seen.has(normalized)) {
+      return;
+    }
+    seen.add(normalized);
+    result.push(normalized);
+  });
+
+  return result;
+}
+
 async function urlToDataUrl(src) {
   if (!src) {
     throw new Error("Missing image source");
@@ -285,7 +335,7 @@ async function urlToDataUrl(src) {
     throw new Error("Fetch API unavailable");
   }
 
-  const response = await fetch(src, { cache: "force-cache" });
+  const response = await fetch(src, { mode: "cors", cache: "force-cache" });
   if (!response.ok) {
     throw new Error(`Asset request failed: ${response.status}`);
   }
@@ -349,19 +399,57 @@ async function rasterizeImage(dataUrl, width, height, outputType = "image/jpeg")
 }
 
 async function resolveImageAsset(src, fallbackLabel = "Product", rasterize = true) {
+  const normalizedSource = String(src || "").trim();
+
   try {
-    const dataUrl = await urlToDataUrl(src);
-    if (!rasterize || dataUrl.startsWith("data:image/png")) {
+    const dataUrl = await urlToDataUrl(normalizedSource);
+    if (!rasterize) {
+      const resolvedFormat = imageFormatFromDataUrl(dataUrl);
       return {
         dataUrl,
-        format: imageFormatFromDataUrl(dataUrl),
+        format: resolvedFormat === "PNG" ? "PNG" : "JPEG",
+        usedFallback: false,
       };
     }
 
-    return rasterizeImage(dataUrl, 320, 240, "image/jpeg");
+    const rasterized = await rasterizeImage(dataUrl, 320, 240, "image/jpeg");
+    return {
+      ...rasterized,
+      format: "JPEG",
+      usedFallback: false,
+    };
   } catch (error) {
-    return createProductPlaceholderAsset(fallbackLabel);
+    const placeholder = createProductPlaceholderAsset(fallbackLabel);
+    if (!placeholder) {
+      return null;
+    }
+
+    return {
+      ...placeholder,
+      format: "JPEG",
+      usedFallback: true,
+    };
   }
+}
+
+async function resolveBestImageAsset(sources, fallbackLabel = "Product") {
+  const candidates = uniqueNonEmpty(sources);
+
+  for (const candidate of candidates) {
+    const asset = await resolveImageAsset(candidate, fallbackLabel, true);
+    if (asset?.dataUrl && !asset.usedFallback) {
+      return {
+        imageAsset: asset,
+        resolvedSource: candidate,
+      };
+    }
+  }
+
+  const placeholder = await resolveImageAsset("", fallbackLabel, true);
+  return {
+    imageAsset: placeholder,
+    resolvedSource: candidates[0] || "",
+  };
 }
 
 async function resolveStaticImage(src) {
@@ -433,22 +521,65 @@ async function softenWatermarkAsset(imageAsset) {
   }
 }
 
-async function attachProductImages(products) {
+async function attachProductImages(products, options = {}) {
   const cache = new Map();
+  const validation = [];
+  const publicAssetBase = normalizePublicAssetBase(options.publicAssetBase);
 
-  return Promise.all(
+  const attached = await Promise.all(
     products.map(async (product) => {
-      const key = product.image || `placeholder:${product.sku}:${product.name}`;
+      const normalizedImage = normalizeImageSource(product.image, publicAssetBase);
+      const directImage = String(product.image || "").trim();
+      const sourceCandidates = uniqueNonEmpty([
+        normalizedImage,
+        directImage,
+        directImage.split("?")[0],
+        normalizedImage.split("?")[0],
+      ]);
+      const key = sourceCandidates[0] || `placeholder:${product.sku}:${product.name}`;
+
       if (!cache.has(key)) {
-        cache.set(key, resolveImageAsset(product.image, product.sku || product.name, true));
+        cache.set(key, resolveBestImageAsset(sourceCandidates, product.sku || product.name));
       }
+
+      const resolved = await cache.get(key);
+      const imageAsset = resolved?.imageAsset;
+      const resolvedSource = resolved?.resolvedSource || normalizedImage;
+      const rowValidation = {
+        sku: product.sku,
+        name: product.name,
+        requestedImage: product.image || "",
+        resolvedImage: resolvedSource,
+        isPublicAbsoluteUrl: /^https?:\/\//i.test(resolvedSource),
+        accessible: Boolean(imageAsset?.dataUrl),
+        usedFallback: Boolean(imageAsset?.usedFallback),
+      };
+      validation.push(rowValidation);
 
       return {
         ...product,
-        imageAsset: await cache.get(key),
+        image: resolvedSource,
+        imageAsset,
       };
     })
   );
+
+  return {
+    products: attached,
+    validation,
+  };
+}
+
+function summarizeImageValidation(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  const failures = list.filter((row) => !row.isPublicAbsoluteUrl || !row.accessible || row.usedFallback);
+
+  return {
+    ok: failures.length === 0,
+    total: list.length,
+    failures,
+    rows: list,
+  };
 }
 
 function arrayBufferToBase64(buffer) {
@@ -858,7 +989,6 @@ function drawTotalsBox(doc, y, totals, fontFamily) {
   const width = 91.72;
   const rowH = 8.47;
   const height = rowH * 3;
-  y = ensurePageSpace(doc, y, height + 4);
 
   setDrawColor(doc, COLORS.grid);
   doc.setLineWidth(0.22);
@@ -871,7 +1001,7 @@ function drawTotalsBox(doc, y, totals, fontFamily) {
   const rows = [
     ["Subtotal", formatCurrency(totals.subtotal)],
     [`GST (${formatPercent(totals.gstRate)})`, formatCurrency(totals.gst)],
-    ["Grand Total", formatCurrency(totals.grand)],
+    ["Final Amount", formatCurrency(totals.grand)],
   ];
 
   rows.forEach(([label, amount], index) => {
@@ -883,7 +1013,7 @@ function drawTotalsBox(doc, y, totals, fontFamily) {
     doc.text(amount, x + width - 2.3, baseline, { align: "right" });
   });
 
-  return y + height + 6.35;
+  return y + height + 3.8;
 }
 
 function drawSummaryTable(doc, y, roomTotals, totals, fontFamily) {
@@ -896,8 +1026,6 @@ function drawSummaryTable(doc, y, roomTotals, totals, fontFamily) {
     ...Array.from(roomTotals.entries()).map(([room, total]) => [String(room).toUpperCase(), formatCurrency(total)]),
     [`GST (${formatPercent(totals.gstRate)})`, formatCurrency(totals.gst)],
   ];
-
-  y = ensurePageSpace(doc, y, headerH + rows.length * rowH + 2);
 
   setFillColor(doc, COLORS.navy);
   doc.rect(x, y, width, headerH, "F");
@@ -923,7 +1051,7 @@ function drawSummaryTable(doc, y, roomTotals, totals, fontFamily) {
     doc.text(amount, x + width - 3.15, top + 6.6, { align: "right" });
   });
 
-  return y + headerH + rows.length * rowH + 8;
+  return y + headerH + rows.length * rowH + 4;
 }
 
 function drawSummaryAndTotals(doc, y, roomTotals, gstRate, fontFamily) {
@@ -932,39 +1060,27 @@ function drawSummaryAndTotals(doc, y, roomTotals, gstRate, fontFamily) {
   const grand = subtotal + gst;
   const totals = { subtotal, gst, grand, gstRate };
 
+  // Keep summary + subtotal/gst/final-amount together as one non-breaking block.
+  const summaryRows = roomTotals.size + 1;
+  const summaryHeaderH = 9.88;
+  const summaryRowH = 9.88;
+  const summaryHeight = summaryHeaderH + summaryRows * summaryRowH + 4;
+  const totalsHeight = 8.47 * 3 + 3.8;
+  const summaryBlockHeight = 4.23 + totalsHeight + summaryHeight;
+  y = ensurePageSpace(doc, y, summaryBlockHeight);
+
   y = drawTotalsBox(doc, y + 4.23, totals, fontFamily);
   y = drawSummaryTable(doc, y, roomTotals, totals, fontFamily);
 
   return { y, ...totals };
 }
 
-function drawFinalPage(doc, totals, fontFamily) {
+function drawTermsAndSignatoryPage(doc, fontFamily) {
   doc.addPage();
-
-  const x = 10.63;
-  const y = 9.17;
-  const width = 188.74;
-  const splitX = 155.27;
-  const height = 9.88;
-
-  setFillColor(doc, COLORS.finalFill);
-  doc.rect(x, y, width, height, "F");
-  setDrawColor(doc, COLORS.grid);
-  doc.setLineWidth(0.32);
-  doc.rect(x, y, width, height);
-  doc.setLineWidth(0.14);
-  doc.line(splitX, y, splitX, y + height);
-
-  setPdfFont(doc, fontFamily, "bold");
-  doc.setFontSize(11);
-  setTextColor(doc, COLORS.navy);
-  doc.text("FINAL AMOUNT", 82.95, 16.35, { align: "center" });
-  setTextColor(doc, COLORS.gold);
-  doc.text(formatCurrency(totals.grand), x + width - 3.15, 16.35, { align: "right" });
 
   setTextColor(doc, COLORS.ink);
   doc.setFontSize(10);
-  doc.text("Terms & Conditions:", 14.16, 30.6);
+  doc.text("Terms & Conditions:", 14.16, 22.0);
 
   setPdfFont(doc, fontFamily, "normal");
   doc.setFontSize(8);
@@ -976,15 +1092,15 @@ function drawFinalPage(doc, totals, fontFamily) {
   ];
 
   terms.forEach((term, index) => {
-    doc.text(term, 14.16, 37.55 + index * 4.23);
+    doc.text(term, 14.16, 28.9 + index * 4.23);
   });
 
   setPdfFont(doc, fontFamily, "bold");
   doc.setFontSize(10);
   setTextColor(doc, COLORS.black);
-  doc.text("For Shreeji Ceramica", 193.7, 30.5, { align: "right" });
+  doc.text("For Shreeji Ceramica", 193.7, 28.0, { align: "right" });
   doc.setFontSize(9);
-  doc.text("Authorized Signatory", 193.7, 50.45, { align: "right" });
+  doc.text("Authorized Signatory", 193.7, 47.95, { align: "right" });
 }
 
 function addWatermarks(doc, watermarkAsset) {
@@ -1069,6 +1185,8 @@ export async function generateQuotationPDF(data, options = {}) {
     gstRate: Math.max(0, coerceNumber(options.gstRate ?? input.gstRate ?? GST_RATE) || GST_RATE),
     logo: options.logo || input.logo || input.logoDataUrl,
     logoUrl: options.logoUrl || input.logoUrl,
+    publicAssetBase: options.publicAssetBase || input.publicAssetBase || DEFAULT_PUBLIC_ASSET_BASE,
+    onImageValidation: typeof options.onImageValidation === "function" ? options.onImageValidation : undefined,
   };
 
   const doc = new jsPDF({
@@ -1087,13 +1205,25 @@ export async function generateQuotationPDF(data, options = {}) {
   });
 
   const assets = await loadReferenceAssets(mergedOptions);
-  const products = await attachProductImages(rawProducts.map(normalizeProduct));
+  const imageResult = await attachProductImages(rawProducts.map(normalizeProduct), {
+    publicAssetBase: mergedOptions.publicAssetBase,
+  });
+  const products = imageResult.products;
+  const imageValidation = summarizeImageValidation(imageResult.validation);
+
+  if (mergedOptions.onImageValidation) {
+    mergedOptions.onImageValidation(imageValidation);
+  }
+
+  if (!imageValidation.ok && typeof console !== "undefined" && typeof console.warn === "function") {
+    console.warn("Some SKU images could not be embedded in PDF.", imageValidation.failures);
+  }
   const grouped = groupByRoom(products);
 
   let y = drawReferenceHeader(doc, input, assets, fontFamily);
   const roomResult = drawRoomTables(doc, grouped, y, fontFamily);
-  const totals = drawSummaryAndTotals(doc, roomResult.y, roomResult.roomTotals, mergedOptions.gstRate, fontFamily);
-  drawFinalPage(doc, totals, fontFamily);
+  drawSummaryAndTotals(doc, roomResult.y, roomResult.roomTotals, mergedOptions.gstRate, fontFamily);
+  drawTermsAndSignatoryPage(doc, fontFamily);
   addWatermarks(doc, assets.watermark);
   addFooters(doc, fontFamily);
 
