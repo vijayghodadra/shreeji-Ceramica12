@@ -1479,51 +1479,64 @@ def _serialize_product(request: Request, product: dict) -> dict:
     code_value = str(product.get("code") or "").strip()
     compact_code_value = normalize_code(code_value)
 
-    if source_key == "kohler" and compact_code_value in KOHLER_NO_IMAGE_CODES:
-        image = None
-    else:
-        image = None
-
-        raw_product_image = str(product.get("image") or "").strip()
-        if raw_product_image:
-            relative = image_relative_path(raw_product_image)
-            if source_key == "kohler" and relative and not relative.startswith("Kohler/"):
-                relative = f"Kohler/{relative}"
-            if relative and _resolve_existing_image_path(relative):
-                image = f"/images/{relative}"
-
-        if not image:
-            expected_image_file = _image_name_from_code(code_value)
-            if expected_image_file:
-                if source_key == "kohler":
-                    kohler_relative = f"Kohler/{expected_image_file}"
-                    expected_image_path = _resolve_existing_image_path(kohler_relative)
-                    if expected_image_path:
-                        image = f"/images/{kohler_relative}"
-                else:
-                    expected_image_path = _resolve_existing_image_path(expected_image_file)
-                    if expected_image_path:
-                        image = f"/images/{expected_image_file}"
-
-        if not image:
-            fallback_relative = _fallback_image_by_code(code_value, source_key)
-            if fallback_relative and _resolve_existing_image_path(fallback_relative):
-                image = f"/images/{fallback_relative}"
-
-        if image and str(image).startswith("/"):
-            relative_image = str(image).split("?", 1)[0]
-            if relative_image.startswith("/images/"):
-                relative_image = relative_image.removeprefix("/images/")
-
-            image_path = _resolve_existing_image_path(relative_image)
-            if image_path:
-                version = f"?v={int(image_path.stat().st_mtime)}"
-                image = f"{str(request.base_url).rstrip('/')}/images/{relative_image}{version}"
-
-        if source_key == "kohler" and image:
-            kohler_relative = image_relative_path(image)
-            if not kohler_relative.startswith("Kohler/") or not _resolve_existing_image_path(kohler_relative):
+    supabase_url = os.environ.get("SUPABASE_URL")
+    
+    if supabase_url:
+        if source_key == "kohler" and compact_code_value in KOHLER_NO_IMAGE_CODES:
+            image = None
+        else:
+            db_image = str(product.get("image") or "").strip()
+            if db_image:
+                relative = image_relative_path(db_image)
+                image = f"{supabase_url}/storage/v1/object/public/product-images/{relative}"
+            else:
                 image = None
+    else:
+        if source_key == "kohler" and compact_code_value in KOHLER_NO_IMAGE_CODES:
+            image = None
+        else:
+            image = None
+    
+            raw_product_image = str(product.get("image") or "").strip()
+            if raw_product_image:
+                relative = image_relative_path(raw_product_image)
+                if source_key == "kohler" and relative and not relative.startswith("Kohler/"):
+                    relative = f"Kohler/{relative}"
+                if relative and _resolve_existing_image_path(relative):
+                    image = f"/images/{relative}"
+    
+            if not image:
+                expected_image_file = _image_name_from_code(code_value)
+                if expected_image_file:
+                    if source_key == "kohler":
+                        kohler_relative = f"Kohler/{expected_image_file}"
+                        expected_image_path = _resolve_existing_image_path(kohler_relative)
+                        if expected_image_path:
+                            image = f"/images/{kohler_relative}"
+                    else:
+                        expected_image_path = _resolve_existing_image_path(expected_image_file)
+                        if expected_image_path:
+                            image = f"/images/{expected_image_file}"
+    
+            if not image:
+                fallback_relative = _fallback_image_by_code(code_value, source_key)
+                if fallback_relative and _resolve_existing_image_path(fallback_relative):
+                    image = f"/images/{fallback_relative}"
+    
+            if image and str(image).startswith("/"):
+                relative_image = str(image).split("?", 1)[0]
+                if relative_image.startswith("/images/"):
+                    relative_image = relative_image.removeprefix("/images/")
+    
+                image_path = _resolve_existing_image_path(relative_image)
+                if image_path:
+                    version = f"?v={int(image_path.stat().st_mtime)}"
+                    image = f"{str(request.base_url).rstrip('/')}/images/{relative_image}{version}"
+    
+            if source_key == "kohler" and image:
+                kohler_relative = image_relative_path(image)
+                if not kohler_relative.startswith("Kohler/") or not _resolve_existing_image_path(kohler_relative):
+                    image = None
 
     base_code_value = product.get("base_code")
     has_image = bool(image)
@@ -1555,11 +1568,15 @@ def _serialize_product(request: Request, product: dict) -> dict:
             override_image = str(override.get("image") or "").strip()
             if override_image:
                 relative = image_relative_path(override_image)
-                resolved = _resolve_existing_image_path(relative)
-                if resolved:
-                    version = f"?v={int(resolved.stat().st_mtime)}"
-                    serialized["image"] = f"{str(request.base_url).rstrip('/')}/images/{relative}{version}"
+                if supabase_url:
+                    serialized["image"] = f"{supabase_url}/storage/v1/object/public/product-images/{relative}"
                     serialized["hasImage"] = True
+                else:
+                    resolved = _resolve_existing_image_path(relative)
+                    if resolved:
+                        version = f"?v={int(resolved.stat().st_mtime)}"
+                        serialized["image"] = f"{str(request.base_url).rstrip('/')}/images/{relative}{version}"
+                        serialized["hasImage"] = True
 
     combined_products = product.get("combined_products")
     if isinstance(combined_products, list) and combined_products:
