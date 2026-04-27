@@ -1507,7 +1507,7 @@ def _serialize_product(request: Request, product: dict) -> dict:
     code_value = str(product.get("code") or "").strip()
     compact_code_value = normalize_code(code_value)
 
-    supabase_url = os.environ.get("SUPABASE_URL")
+    supabase_url = os.environ.get("SUPABASE_URL", "https://zwbkzsskjyctffnasjea.supabase.co")
     
     if supabase_url:
         if source_key == "kohler" and compact_code_value in KOHLER_NO_IMAGE_CODES:
