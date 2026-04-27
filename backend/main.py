@@ -1517,11 +1517,13 @@ def _serialize_product(request: Request, product: dict) -> dict:
             if db_image:
                 relative = image_relative_path(db_image)
                 exact = SUPABASE_IMAGE_CACHE.get(normalize_code(relative))
+                import urllib.parse
                 if exact:
-                    import urllib.parse
                     image = f"{supabase_url}/storage/v1/object/public/product-images/{urllib.parse.quote(exact)}"
                 else:
-                    image = None
+                    # Fallback to the relative path, removing spaces (which is a common mismatch issue)
+                    fallback_relative = relative.replace(" ", "")
+                    image = f"{supabase_url}/storage/v1/object/public/product-images/{urllib.parse.quote(fallback_relative)}"
             else:
                 image = None
     else:
@@ -1603,13 +1605,13 @@ def _serialize_product(request: Request, product: dict) -> dict:
                 relative = image_relative_path(override_image)
                 if supabase_url:
                     exact = SUPABASE_IMAGE_CACHE.get(normalize_code(relative))
+                    import urllib.parse
                     if exact:
-                        import urllib.parse
                         serialized["image"] = f"{supabase_url}/storage/v1/object/public/product-images/{urllib.parse.quote(exact)}"
-                        serialized["hasImage"] = True
                     else:
-                        serialized["image"] = None
-                        serialized["hasImage"] = False
+                        fallback_relative = relative.replace(" ", "")
+                        serialized["image"] = f"{supabase_url}/storage/v1/object/public/product-images/{urllib.parse.quote(fallback_relative)}"
+                    serialized["hasImage"] = True
                 else:
                     resolved = _resolve_existing_image_path(relative)
                     if resolved:
