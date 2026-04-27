@@ -757,6 +757,27 @@ def _log_kohler_runtime_paths() -> None:
 
 
 def load_catalogs() -> dict[str, dict]:
+    supabase_url = os.environ.get("SUPABASE_URL")
+    supabase_key = os.environ.get("SUPABASE_KEY")
+    if supabase_url and supabase_key:
+        print("[startup] loading from Supabase")
+        import requests
+        try:
+            res = requests.get(
+                f"{supabase_url}/rest/v1/products",
+                headers={"apikey": supabase_key, "Authorization": f"Bearer {supabase_key}"}
+            )
+            if res.status_code == 200:
+                data = res.json()
+                aquant = [p for p in data if p.get('source') == 'aquant']
+                kohler = [p for p in data if p.get('source') == 'kohler']
+                return {
+                    "aquant": _build_source_store(aquant),
+                    "kohler": _build_source_store(kohler)
+                }
+        except Exception as e:
+            print("[startup] Supabase load failed:", e)
+
     source_store = {}
     allow_kohler_products_fallback = os.environ.get("ENABLE_KOHLER_PRODUCTS_FALLBACK", "").strip().lower() in {
         "1",

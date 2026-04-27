@@ -6,7 +6,7 @@ import { buildProposalFileName, generateQuotationPDF } from "./pdf/quotationPdf"
 const defaultBackendUrl =
   process.env.NODE_ENV === "development"
     ? "http://127.0.0.1:8001"
-    : "https://shriji-tiles.onrender.com";
+    : "/api";
 
 const runtimeBackendUrl =
   (typeof window !== "undefined" && window.desktopConfig?.backendUrl) ||
