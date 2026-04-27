@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 420" role="img" aria-labelledby="title desc">
+  <title id="title">Product image fallback</title>
+  <desc id="desc">Fallback image shown when product image fails to load.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f4f6fa"/>
+      <stop offset="1" stop-color="#e7ebf3"/>
+    </linearGradient>
+  </defs>
+  <rect width="640" height="420" fill="url(#bg)" rx="20"/>
+  <rect x="56" y="48" width="528" height="324" rx="16" fill="#ffffff" stroke="#cfd8e6" stroke-width="4"/>
+  <g fill="none" stroke="#90a2bf" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="252" y="120" width="136" height="96" rx="10"/>
+    <path d="M252 216L300 170L338 200L388 152"/>
+    <circle cx="356" cy="152" r="10" fill="#90a2bf" stroke="none"/>
+  </g>
+  <text x="320" y="280" text-anchor="middle" font-family="Arial, sans-serif" font-size="34" font-weight="700" fill="#3f4f6b">IMAGE UNAVAILABLE</text>
+  <text x="320" y="314" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" fill="#667892">Using default product preview</text>
+</svg>

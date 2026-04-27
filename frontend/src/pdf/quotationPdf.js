@@ -282,6 +282,10 @@ function normalizePublicAssetBase(baseUrl) {
   }
 }
 
+function isLocalHost(hostname) {
+  return /^(localhost|127\.0\.0\.1|::1)$/i.test(String(hostname || "").trim());
+}
+
 function normalizeImageSource(src, publicAssetBase) {
   const raw = String(src || "").trim();
   if (!raw) {
@@ -298,6 +302,11 @@ function normalizeImageSource(src, publicAssetBase) {
     const absolute = new URL(raw, base);
     if (!["http:", "https:"].includes(absolute.protocol)) {
       return "";
+    }
+
+    const baseHost = new URL(base).hostname;
+    if (isLocalHost(absolute.hostname) && !isLocalHost(baseHost)) {
+      return `${base}${absolute.pathname}${absolute.search}${absolute.hash}`;
     }
 
     return absolute.toString();
@@ -335,7 +344,7 @@ async function urlToDataUrl(src) {
     throw new Error("Fetch API unavailable");
   }
 
-  const response = await fetch(src, { mode: "cors", cache: "force-cache" });
+  const response = await fetch(src);
   if (!response.ok) {
     throw new Error(`Asset request failed: ${response.status}`);
   }
@@ -419,6 +428,13 @@ async function resolveImageAsset(src, fallbackLabel = "Product", rasterize = tru
       usedFallback: false,
     };
   } catch (error) {
+    if (typeof console !== "undefined" && typeof console.warn === "function") {
+      console.warn("PDF image fetch failed, using fallback placeholder", {
+        source: normalizedSource,
+        message: error?.message || String(error),
+      });
+    }
+
     const placeholder = createProductPlaceholderAsset(fallbackLabel);
     if (!placeholder) {
       return null;

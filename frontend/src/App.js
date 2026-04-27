@@ -17,6 +17,7 @@ const BACKEND_BASE_URL = runtimeBackendUrl.replace(/\/+$/, "");
 const PUBLIC_ASSET_BASE_URL =
   process.env.REACT_APP_PUBLIC_ASSET_BASE_URL ||
   BACKEND_BASE_URL;
+const PUBLIC_FALLBACK_IMAGE_PATH = "/assets/fallback-product.svg";
 const API_URL = `${BACKEND_BASE_URL}/search`;
 
 const currencyFormatter = new Intl.NumberFormat("en-IN", {
@@ -95,28 +96,75 @@ function coercePrice(value) {
   return Math.round(parsed);
 }
 
+function isLocalHost(hostname) {
+  return /^(localhost|127\.0\.0\.1|::1)$/i.test(String(hostname || "").trim());
+}
+
+function toAbsolutePublicUrl(value, baseUrl = PUBLIC_ASSET_BASE_URL) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+
+  if (raw.startsWith("data:image") || raw.startsWith("blob:")) {
+    return raw;
+  }
+
+  try {
+    const base = new URL(String(baseUrl || PUBLIC_ASSET_BASE_URL).trim() || PUBLIC_ASSET_BASE_URL);
+    const parsed = new URL(raw, base);
+
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      return "";
+    }
+
+    if (isLocalHost(parsed.hostname) && !isLocalHost(base.hostname)) {
+      return `${base.origin}${parsed.pathname}${parsed.search}${parsed.hash}`;
+    }
+
+    return parsed.toString();
+  } catch (error) {
+    return "";
+  }
+}
+
+function uniqueNonEmpty(values) {
+  const seen = new Set();
+  const result = [];
+
+  (Array.isArray(values) ? values : []).forEach((value) => {
+    const normalized = String(value || "").trim();
+    if (!normalized || seen.has(normalized)) {
+      return;
+    }
+    seen.add(normalized);
+    result.push(normalized);
+  });
+
+  return result;
+}
+
+function getPublicFallbackImageUrl() {
+  const runtimeBase =
+    typeof window !== "undefined" && window.location?.origin
+      ? window.location.origin
+      : PUBLIC_ASSET_BASE_URL;
+
+  return toAbsolutePublicUrl(PUBLIC_FALLBACK_IMAGE_PATH, runtimeBase);
+}
+
 function normalizeImageUrl(value) {
   const raw = String(value || "").trim();
   if (!raw) {
     return "";
   }
-  if (raw.startsWith("data:image") || raw.startsWith("blob:")) {
-    return raw;
-  }
-  if (raw.startsWith("/")) {
-    return `${BACKEND_BASE_URL}${raw}`;
-  }
 
-  if (/^https?:\/\/(localhost|127\.0\.0\.1|::1)/i.test(raw)) {
-    try {
-      const parsed = new URL(raw);
-      return `${PUBLIC_ASSET_BASE_URL.replace(/\/+$/, "")}${parsed.pathname}${parsed.search}${parsed.hash}`;
-    } catch (error) {
-      return "";
-    }
-  }
+  const candidates = uniqueNonEmpty([
+    toAbsolutePublicUrl(raw, BACKEND_BASE_URL),
+    toAbsolutePublicUrl(raw, PUBLIC_ASSET_BASE_URL),
+  ]);
 
-  return raw;
+  return candidates[0] || "";
 }
 
 function buildProductImageUrl(product) {
@@ -125,13 +173,66 @@ function buildProductImageUrl(product) {
     return primary;
   }
 
-  return buildPlaceholder(product?.name);
+  return getPublicFallbackImageUrl() || buildPlaceholder(product?.name);
 }
 
 function handleProductImageError(event, product) {
   const target = event.currentTarget;
   target.dataset.fallbackCount = "1";
-  target.src = buildPlaceholder(product?.name);
+  target.src = getPublicFallbackImageUrl() || buildPlaceholder(product?.name);
+}
+
+async function isDirectImageUrlAccessible(url) {
+  const target = String(url || "").trim();
+  if (!target || target.startsWith("data:image") || target.startsWith("blob:")) {
+    return Boolean(target);
+  }
+
+  try {
+    const response = await fetch(target);
+
+    if (!response.ok) {
+      console.warn("Image URL fetch failed", { url: target, status: response.status });
+      return false;
+    }
+
+    const contentType = String(response.headers.get("content-type") || "").toLowerCase();
+    const isImage = contentType.includes("image/");
+    if (!isImage) {
+      console.warn("Image URL returned non-image content", { url: target, contentType });
+    }
+    return isImage;
+  } catch (error) {
+    console.warn("Image URL fetch threw error", {
+      url: target,
+      message: error?.message || String(error),
+    });
+    return false;
+  }
+}
+
+async function resolvePdfImageUrl(item) {
+  const normalized = normalizeImageUrl(item?.image);
+  const raw = String(item?.image || "").trim();
+  const candidates = uniqueNonEmpty([
+    normalized,
+    toAbsolutePublicUrl(raw, PUBLIC_ASSET_BASE_URL),
+    toAbsolutePublicUrl(raw, BACKEND_BASE_URL),
+    toAbsolutePublicUrl(raw.split("?")[0], PUBLIC_ASSET_BASE_URL),
+  ]);
+
+  for (const candidate of candidates) {
+    if (await isDirectImageUrlAccessible(candidate)) {
+      return candidate;
+    }
+  }
+
+  const fallbackUrl = getPublicFallbackImageUrl();
+  if (await isDirectImageUrlAccessible(fallbackUrl)) {
+    return fallbackUrl;
+  }
+
+  return buildPlaceholder(item?.name);
 }
 
 function normalizeSnippet(value) {
@@ -422,38 +523,44 @@ function App() {
     document.body.removeChild(link);
   };
 
-  const buildPdfData = () => ({
-    clientInfo: {
-      ...clientInfo,
-      mobile: clientInfo.phone,
-      name: clientInfo.clientName,
-    },
-    proposalNo: clientInfo.proposalNo,
-    date: new Date().toISOString(),
-    products: bom.map((item) => ({
-      name: item.name,
-      sku: item.code,
-      size: item.size,
-      qty: item.qty,
-      rate: item.rate,
-      discount: discountConfig.method === "common" ? discountConfig.bulkDiscount : item.discount,
-      amount: calculateRowAmount(item),
-      image: buildProductImageUrl(item),
-      room: Array.isArray(item.room) ? item.room : item.room ? [item.room] : [],
-      details: item.displayName ? `${item.displayName}` : item.name,
-      color: item.color,
-      source: item.source,
-      mrp: item.rate,
-    })),
-    gstRate: clientInfo.gstPercentage,
-    publicAssetBase: PUBLIC_ASSET_BASE_URL,
-  });
+  const buildPdfData = async () => {
+    const products = await Promise.all(
+      bom.map(async (item) => ({
+        name: item.name,
+        sku: item.code,
+        size: item.size,
+        qty: item.qty,
+        rate: item.rate,
+        discount: discountConfig.method === "common" ? discountConfig.bulkDiscount : item.discount,
+        amount: calculateRowAmount(item),
+        image: await resolvePdfImageUrl(item),
+        room: Array.isArray(item.room) ? item.room : item.room ? [item.room] : [],
+        details: item.displayName ? `${item.displayName}` : item.name,
+        color: item.color,
+        source: item.source,
+        mrp: item.rate,
+      }))
+    );
+
+    return {
+      clientInfo: {
+        ...clientInfo,
+        mobile: clientInfo.phone,
+        name: clientInfo.clientName,
+      },
+      proposalNo: clientInfo.proposalNo,
+      date: new Date().toISOString(),
+      products,
+      gstRate: clientInfo.gstPercentage,
+      publicAssetBase: PUBLIC_ASSET_BASE_URL,
+    };
+  };
 
   const generatePdf = async (preview = false) => {
     if (bom.length === 0) return alert("Add items first");
     setPdfGenerating(true);
     try {
-      const payload = buildPdfData();
+      const payload = await buildPdfData();
       const pdfBlob = await generateQuotationPDF(payload, {
         branding: discountConfig.watermark,
         download: !preview,
@@ -846,7 +953,9 @@ function App() {
                   alt={imagePreview.title}
                   style={{ transform: `scale(${imagePreview.zoom})` }}
                   onError={(event) => {
-                    event.currentTarget.src = buildPlaceholder(imagePreview.title || "Catalog product");
+                    event.currentTarget.src =
+                      getPublicFallbackImageUrl() ||
+                      buildPlaceholder(imagePreview.title || "Catalog product");
                   }}
                 />
               </div>
