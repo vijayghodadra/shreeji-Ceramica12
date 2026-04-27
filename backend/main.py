@@ -765,14 +765,27 @@ def load_catalogs() -> dict[str, dict]:
         print("[startup] loading from Supabase")
         import requests
         try:
-            res = requests.get(
-                f"{supabase_url}/rest/v1/products?limit=5000",
-                headers={"apikey": supabase_key, "Authorization": f"Bearer {supabase_key}"}
-            )
-            if res.status_code == 200:
-                data = res.json()
-                aquant = [p for p in data if p.get('source') == 'aquant']
-                kohler = [p for p in data if p.get('source') == 'kohler']
+            all_products = []
+            offset = 0
+            limit = 1000
+            
+            while True:
+                res = requests.get(
+                    f"{supabase_url}/rest/v1/products?limit={limit}&offset={offset}",
+                    headers={"apikey": supabase_key, "Authorization": f"Bearer {supabase_key}"}
+                )
+                if res.status_code == 200:
+                    batch = res.json()
+                    all_products.extend(batch)
+                    if len(batch) < limit:
+                        break
+                    offset += limit
+                else:
+                    break
+            
+            if all_products:
+                aquant = [p for p in all_products if p.get('source') == 'aquant']
+                kohler = [p for p in all_products if p.get('source') == 'kohler']
                 
                 try:
                     list_res = requests.post(
