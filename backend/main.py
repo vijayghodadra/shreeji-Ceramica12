@@ -756,6 +756,8 @@ def _log_kohler_runtime_paths() -> None:
         print("Files: <error>", error)
 
 
+SUPABASE_IMAGE_CACHE: dict[str, str] = {}
+
 def load_catalogs() -> dict[str, dict]:
     supabase_url = os.environ.get("SUPABASE_URL")
     supabase_key = os.environ.get("SUPABASE_KEY")
@@ -771,6 +773,32 @@ def load_catalogs() -> dict[str, dict]:
                 data = res.json()
                 aquant = [p for p in data if p.get('source') == 'aquant']
                 kohler = [p for p in data if p.get('source') == 'kohler']
+                
+                try:
+                    list_res = requests.post(
+                        f"{supabase_url}/storage/v1/object/list/product-images",
+                        headers={"Authorization": f"Bearer {supabase_key}"},
+                        json={"limit": 10000}
+                    )
+                    if list_res.status_code == 200:
+                        for obj in list_res.json():
+                            name = obj.get("name")
+                            if name:
+                                SUPABASE_IMAGE_CACHE[normalize_code(name)] = name
+                                
+                    list_res_kohler = requests.post(
+                        f"{supabase_url}/storage/v1/object/list/product-images",
+                        headers={"Authorization": f"Bearer {supabase_key}"},
+                        json={"prefix": "Kohler/", "limit": 10000}
+                    )
+                    if list_res_kohler.status_code == 200:
+                        for obj in list_res_kohler.json():
+                            name = obj.get("name")
+                            if name:
+                                SUPABASE_IMAGE_CACHE[normalize_code(name)] = f"Kohler/{name}"
+                except Exception as e:
+                    print("[startup] Supabase image list failed:", e)
+
                 return {
                     "aquant": _build_source_store(aquant),
                     "kohler": _build_source_store(kohler)
@@ -1488,7 +1516,12 @@ def _serialize_product(request: Request, product: dict) -> dict:
             db_image = str(product.get("image") or "").strip()
             if db_image:
                 relative = image_relative_path(db_image)
-                image = f"{supabase_url}/storage/v1/object/public/product-images/{relative}"
+                exact = SUPABASE_IMAGE_CACHE.get(normalize_code(relative))
+                if exact:
+                    import urllib.parse
+                    image = f"{supabase_url}/storage/v1/object/public/product-images/{urllib.parse.quote(exact)}"
+                else:
+                    image = None
             else:
                 image = None
     else:
@@ -1569,8 +1602,14 @@ def _serialize_product(request: Request, product: dict) -> dict:
             if override_image:
                 relative = image_relative_path(override_image)
                 if supabase_url:
-                    serialized["image"] = f"{supabase_url}/storage/v1/object/public/product-images/{relative}"
-                    serialized["hasImage"] = True
+                    exact = SUPABASE_IMAGE_CACHE.get(normalize_code(relative))
+                    if exact:
+                        import urllib.parse
+                        serialized["image"] = f"{supabase_url}/storage/v1/object/public/product-images/{urllib.parse.quote(exact)}"
+                        serialized["hasImage"] = True
+                    else:
+                        serialized["image"] = None
+                        serialized["hasImage"] = False
                 else:
                     resolved = _resolve_existing_image_path(relative)
                     if resolved:
