@@ -170,7 +170,8 @@ function normalizeImageUrl(value) {
 function buildProductImageUrl(product) {
   const primary = normalizeImageUrl(product?.image);
   if (primary) {
-    return primary;
+    const separator = primary.includes("?") ? "&" : "?";
+    return `${primary}${separator}cb=new_cache_fix_1`;
   }
 
   return getPublicFallbackImageUrl() || buildPlaceholder(product?.name);
@@ -353,7 +354,7 @@ function App() {
       return;
     }
     try {
-      const autocompleteUrl = `${BACKEND_BASE_URL}/autocomplete?q=${encodeURIComponent(searchQuery)}&catalog=${encodeURIComponent(catalogId)}&limit=8`;
+      const autocompleteUrl = `${BACKEND_BASE_URL}/autocomplete?q=${encodeURIComponent(searchQuery)}&catalog=${encodeURIComponent(catalogId)}&limit=8&_cb=${Date.now()}`;
       const response = await axios.get(autocompleteUrl);
       setSuggestions(response.data?.suggestions || []);
       setShowSuggestions(true);
@@ -366,7 +367,7 @@ function App() {
     if (!searchQuery) return;
     setLoading(true);
     try {
-      const requestUrl = `${API_URL}?q=${encodeURIComponent(searchQuery)}&catalog=${encodeURIComponent(catalogId)}`;
+      const requestUrl = `${API_URL}?q=${encodeURIComponent(searchQuery)}&catalog=${encodeURIComponent(catalogId)}&_cb=${Date.now()}`;
       const response = await axios.get(requestUrl);
       setResults(response.data?.results || []);
       setHasSearched(true);
