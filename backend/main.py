@@ -764,7 +764,7 @@ def load_catalogs() -> dict[str, dict]:
         import requests
         try:
             res = requests.get(
-                f"{supabase_url}/rest/v1/products",
+                f"{supabase_url}/rest/v1/products?limit=5000",
                 headers={"apikey": supabase_key, "Authorization": f"Bearer {supabase_key}"}
             )
             if res.status_code == 200:
@@ -1624,6 +1624,7 @@ def health():
 
 
 @app.get("/search")
+@app.get("/api/search")
 def search(
     request: Request,
     q: str = Query(default=""),
@@ -1686,6 +1687,7 @@ def search(
 
 
 @app.get("/autocomplete")
+@app.get("/api/autocomplete")
 def autocomplete(
     q: str = Query(default=""),
     query: str = Query(default=""),
