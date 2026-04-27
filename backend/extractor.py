@@ -7,8 +7,11 @@ import json
 import re
 from pathlib import Path
 from urllib.parse import urlparse
+try:
+    import fitz
+except ImportError:
+    fitz = None
 
-import fitz
 from runtime_paths import get_backend_base_dir, get_images_dir
 
 cv2 = None
