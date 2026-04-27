@@ -111,7 +111,14 @@ function toAbsolutePublicUrl(value, baseUrl = PUBLIC_ASSET_BASE_URL) {
   }
 
   try {
-    const base = new URL(String(baseUrl || PUBLIC_ASSET_BASE_URL).trim() || PUBLIC_ASSET_BASE_URL);
+    // If the image is already a full absolute URL, parse it directly.
+    if (raw.startsWith("http://") || raw.startsWith("https://")) {
+      return new URL(raw).toString();
+    }
+
+    const fallbackOrigin = typeof window !== "undefined" && window.location?.origin ? window.location.origin : "http://localhost";
+    const baseStr = String(baseUrl || PUBLIC_ASSET_BASE_URL).trim() || PUBLIC_ASSET_BASE_URL;
+    const base = new URL(baseStr, fallbackOrigin);
     const parsed = new URL(raw, base);
 
     if (!["http:", "https:"].includes(parsed.protocol)) {
